@@ -1,0 +1,149 @@
+---
+title: "AnatomyRF"
+author: "Chloee McLaughlin"
+date: "11/8/23"
+output: html_document
+---
+
+```{r, Libraries, include=FALSE}
+library(Boruta)
+library(randomForest)
+library(iml) 
+library(xgboost)
+```
+
+```{r, data load, include=FALSE} 
+##Environment and phenotype for Burton lines from Mexico
+burton_full <- read.csv("../data/Burton_PhenoEnv.csv")
+
+burton_env <- burton_full[, c(1:6,23:172)]
+burton_phene <- burton_full[, c(1:22)]
+
+##Environmental data for genotyped CIMMYT accessions, will use this for model predictions
+cimmyt <- read.csv("../data/CIMMyT_PredPhenoEnv.csv")
+cimmyt_env <- cimmyt[,c(1:6,16:163)]
+```
+
+Using the Boruta method to 
+1. Identify all environmentally related traits (variation described by at least two aspects of home environment) and 
+2. Identify the aspects of environment that describe variation in environmentally related traits 
+```{r, Boruta Algorithm, include=FALSE}
+store = burton_full
+y = NULL
+set.seed(111)
+
+for (i in 7:22) {
+  print(names(store)[i]) ##Print env var 
+  boruta_train <- Boruta(store[,i] ~., data = store[,(c(i,45:194))], maxRuns=100, doTrace = 0) 
+  boruta_signif <- getSelectedAttributes(boruta_train, withTentative = TRUE) ##Get the tentatively important vars
+  tmp <- toString(boruta_signif) ##Change significant vars to a string 
+  print(boruta_signif) ##Print significant env variables
+  y <- rbind(y, tmp) ##make a df of important variables, iterates over all tested traits
+}
+
+m_boruta <- as.matrix(y) ##rename df 
+colnames(m_boruta) <- c("Vars") ##Name variables column (stored as a string)
+rownames(m_boruta) <- gsub(",.*$", "", m_boruta) ##Add row names for the modeled variables
+
+##m_boruta saved for lazy load, otherwise have to rerun above code every time 
+#saveRDS(m_boruta, file = "../data/BorutaFeatures.rds")
+m_boruta <- readRDS(file = "../data/BorutaFeatures.rds")
+```
+
+Training RF models for all environmentally related traits recovered by Boruta method 
+```{r, random forest, include=FALSE}
+imp = m_boruta ##Has all traits and important aspects of env
+training_df = burton_full
+prediction_df = cimmyt_env 
+
+x = NULL
+burton_predicted = NULL
+shap.plot = NULL
+
+#burton_predicted_final = burton_full$Accession
+
+set.seed(111)
+
+#pdf("../output/RFtraining_Plots_AllTrain.pdf")
+#par(mar=c(2,2,2,2))
+#par(oma=c(0,0,0,0))
+#par(mfrow=c(4,4))
+
+list <- c(1:9) #only anatomy traits used in the text
+
+for (i in list) { 
+  boruta_vars <- imp[i,] #Get string with list for specific trait
+  boruta_vars <- strsplit(x=boruta_vars, ", ") #Split string
+  trait <- rownames(imp)[i] #Get trait
+  rf.data <- training_df[,c(boruta_vars[[1]])] #Make a df of training data that only includes sig environmental descriptors
+  names(rf.data)[1] <- "target" #change trait name to "target" for the equation
+ 
+  rf <- randomForest(target~., data=rf.data, proximity=TRUE, ntree=5000) #RF
+  
+  #Set up for plotting training vs testing with the same axes lengths
+  xaxis = training_df[,trait]
+  yaxis = rf$predicted
+  all = c(xaxis,yaxis)
+  range = c(min(all), max(all))
+  
+  plot(training_df[,trait], rf$predicted, main=trait, xlab="Observed",
+       ylab="RF Predicted", xlim=range, ylim=range, pch=1, cex=1, cex.lab=1.2, cex.axis=1,
+       cex.main=1)
+  
+  line <- lm(rf$predicted ~ training_df[,trait])
+  abline(line, col="gray", lwd=2)
+  legend("bottomright", bty="n", legend=paste("adj.r.squared =", 
+        format(summary(line)$adj.r.squared, digits=4)))
+    summary(line)$r.squared
+    summary(line)$adj.r.squared
+
+  ##SHAPLEY contributions of feature values to the prediction
+  #https://christophm.github.io/interpretable-ml-book/shapley.html#general-idea
+  #https://cran.r-project.org/web/packages/iml/vignettes/intro.html
+  X <- rf.data[which(names(rf.data) != "target")]
+  predictor <- Predictor$new(rf, data = X, y = rf.data$target)
+  shapley <- Shapley$new(predictor, x.interest = X[1, ])
+  shap.plot[[i]] <- shapley$plot() +
+    ggtitle(trait) +
+    ylab("Descriptor value contribution")
+  
+  #Make predictions using prediction_df and constructed RF 
+  rf.testing <- prediction_df[names(rf.data[,-c(1)])]
+  prediction_store <- predict(rf, newdata=rf.testing)
+  prediction_df$trait.pred <- prediction_store
+  names(prediction_df)[names(prediction_df) == "trait.pred"] <- paste(trait, '_pred', sep='')
+  
+  print(trait)
+  print(rf)
+}
+
+#dev.off()
+
+#pdf("../output/RFtraining_Plots_AllTrain_SHAP.pdf")
+##SHAPLEY plots for contribution of decriptors on RF models 
+shap.plot[[4]]
+shap.plot[[5]]
+shap.plot[[7]]
+shap.plot[[10]] 
+shap.plot[[11]]
+shap.plot[[12]] 
+shap.plot[[13]]
+shap.plot[[14]] 
+shap.plot[[17]]
+shap.plot[[18]]
+shap.plot[[19]]
+shap.plot[[20]]
+shap.plot[[21]]
+shap.plot[[22]]
+shap.plot[[23]]
+shap.plot[[26]]
+shap.plot[[31]]
+shap.plot[[32]] 
+shap.plot[[33]] 
+shap.plot[[36]] 
+shap.plot[[37]] 
+shap.plot[[38]]
+#dev.off()
+
+mex_predictions <- prediction_df
+```
