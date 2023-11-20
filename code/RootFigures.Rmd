@@ -100,7 +100,7 @@ boxplot(Alt~bin.PC1, data=env.pc.phene, col=PC.palette, main="Alt~bin.PC1")
 ##Smmothed env 
 focal.env <- c("Alt", "Ann.Mean.Tmp", "pH_H20_1m")
 
-cimmyt_env <- read.csv("../data/CIMMyT_PredPhenoEnv.csv")
+cimmyt_env <- read.csv("../data/CIMMYT_PredPhenoEnv.csv")
 
 cimmyt.focal.env <- cimmyt_env %>% dplyr::select("Longitude", "Latitude","Alt", "Ann.Mean.Tmp", "pH_H20_1m")
 
