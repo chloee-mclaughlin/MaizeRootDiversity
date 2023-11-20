@@ -1,0 +1,490 @@
+---
+title: "RootDiversity_MainFigures"
+author: "Chloee McLaughlin"
+output: html_document
+date: "2023-03-06"
+---
+
+```{data load, include=FALSE}
+##Environment and phenotype for Burton Mexican lines
+burton_full <- read.csv("../data/Burton_PhenoEnv.csv")
+```
+
+```{Figure 1, echo = FALSE}
+library(ade4)
+library(factoextra)
+library(dvmisc)
+library(dismo)
+library(sf)
+library(rnaturalearth)
+
+burton_env <- burton_full[, c(1:6,23:172)]
+burton_phene <- burton_full[, c(1:22)]
+
+##############################
+##A) PCA of Burton phenotypes#
+##############################
+burton_cat <- burton_phene[,c(1:6)] 
+burton_act <- burton_phene[c("RXSA","TCA","CCFN","CCA","AA","CCS","TSA","MVA","NMV","MA","MD")]
+
+burton.pca <- dudi.pca(burton_act,
+                    scannf = FALSE,
+                    nf = 10
+                    )
+
+fviz_screeplot(burton.pca,
+               title=("Burton Phenotypic Scree Plot"))
+                   
+pca <- fviz_pca_biplot(burton.pca,
+             axes=c(2,3),
+             geom="point",
+             col.var = "black",
+             repel = TRUE, 
+             labels.ind= FALSE,
+             legend.title = "PC groupings",
+             title = "Burton Phenotypic PC",
+             pch=16
+             )
+pca
+
+######################################################################
+##B) GRANAR representations of PC1 PC2 and PC3 extreme cross sections#
+######################################################################
+## Files for this part live in https://github.com/HydraulicViper/RootDiversity
+
+#########################################
+##C phenotypic PC1 vs Axial conductance##
+#########################################
+burton.ind.scores <- get_pca_ind(burton.pca)
+burton.pc.scores <- cbind(burton_phene[,c(1:3)], burton_act, burton.ind.scores$coord)
+colnames(burton.pc.scores)[15:24] <- paste("Coord", 
+colnames(burton.pc.scores[,c(15:24)]), sep = ".")
+
+##Split PC1 values into 3 bins for plotting/spatial plotting purposes
+burton.pc.scores$bin.PC1 <- quant_groups(burton.pc.scores$Coord.Dim.1, 3)
+burton.pc.scores$bin.PC2 <- quant_groups(burton.pc.scores$Coord.Dim.2, 3)
+burton.pc.scores$bin.PC3 <- quant_groups(burton.pc.scores$Coord.Dim.3, 3)
+
+##Predicted and observed conductivitied 
+KrKx <- read.csv("../data/HydraulicParametersMean_PredictedObserved.csv")
+KrKx$Accession <- gsub("_", "", KrKx$Accession)
+
+burton.pc.KrKx <- left_join(burton.pc.scores, KrKx, by ="Accession")
+
+plot(burton.pc.KrKx$Kx, burton.pc.KrKx$Coord.Dim.1, xlab="Kx", ylab = "PC1", pch=16, col="#AC9E57")
+line <- lm(burton.pc.KrKx$Coord.Dim.1 ~ burton.pc.KrKx$Kx)
+abline(line, col="gray")
+legend("bottomright", bty="n", legend=paste("R =", format(cor(burton.pc.KrKx$Kx,
+                                                              burton.pc.scores$Coord.Dim.1), digits=4)))
+
+##########################################
+##D phenotypic PC2 vs Radial conductivity#
+##########################################
+plot(burton.pc.KrKx$kr2, burton.pc.KrKx$Coord.Dim.2, xlab="Kx", ylab = "PC1", pch=16, col="#AC9E57")
+line <- lm(burton.pc.KrKx$Coord.Dim.2 ~ burton.pc.KrKx$kr2)
+abline(line, col="gray")
+legend("bottomright", bty="n", legend=paste("R =", format(cor(burton.pc.KrKx$kr2,
+                                                              burton.pc.scores$Coord.Dim.2), digits=4)))
+
+##########################################################################################
+##E Smoothed environment that correlated to phenotypic variation in Burton phenotypic PCA#
+##########################################################################################
+env.pc.phene <- left_join(burton.pc.scores, burton_env)
+
+PC.palette <- c("black", "darkgray", "white")
+
+boxplot(Alt~bin.PC1, data=env.pc.phene, col=PC.palette, main="Alt~bin.PC1")
+#boxplot(pet_annual~bin.PC2, data=env.pc.phene, col=PC.palette, main="pet_annual~bin.PC2")
+#boxplot(sand_1m~bin.PC3, data=env.pc.phene, col=PC.palette, main="sand_1m~bin.PC3")
+
+##Smmothed env 
+focal.env <- c("Alt", "Ann.Mean.Tmp", "pH_H20_1m")
+
+cimmyt_env <- read.csv("../data/CIMMyT_PredPhenoEnv.csv")
+
+cimmyt.focal.env <- cimmyt_env %>% dplyr::select("Longitude", "Latitude","Alt", "Ann.Mean.Tmp", "pH_H20_1m")
+
+##Make spatial objects
+dsp <- SpatialPoints(cimmyt.focal.env[,1:2], proj4string=CRS("+proj=longlat +datum=NAD83")) ##isolate Longitude and Latitude
+dsp <- SpatialPointsDataFrame(dsp, cimmyt.focal.env) ##bind the spatial object to original df
+
+mex_sp <- ne_countries(country = "Mexico", ##make an sp object of mexico 
+                       returnclass = c("sp")) 
+
+##Make a map of Mexico with many polygons, polygons will be masked for the actual continent coordinates and shapes will be filled with the mean values of our variable of interest 
+v <- voronoi(dsp)
+plot(v)
+
+##Isolate polygon map to only include country bounds
+mex_agg <- aggregate(mex_sp) 
+mex_intersect <- raster::intersect(v, mex_agg) #Warning message about having too few points in Northwest portion of country, is okay for our purposes 
+
+for (i in c(focal.env)) {
+  ##Fill in polygons with values
+  spplot(mex_intersect, colnames(cimmyt.focal.env[i]), col.regions=rev(get_col_regions()))
+  
+  ##Make new raster, this will contain our interpolated results (MUST HAVE 'ras.tif' in working directory )
+  ras <- raster::raster('../output/ras.tif')
+
+  ##Set raster bounds (Still cuts off Northwest corner because of lack of  data)
+  extent_mex <- extent(-120.8167, -86.06667, 14.39336, 30.64336)
+  extent(ras) <- extent_mex
+  ar <- setExtent(ras, extent_mex, keepres=TRUE)
+  
+  ##Make a df that sets Longitude and Latitude columns as the coordinates, crs matches that of the raster 
+  df = st_as_sf(cimmyt.focal.env, coords = c("Longitude", "Latitude")) %>% st_set_crs(4326)
+
+  ##Plots variable of interest into the raster 
+  ras_comb = raster::rasterize(mex_intersect, 
+                             raster::raster(mex_intersect, resolution = .05), 
+                             mex_intersect[[i]])
+  
+  ##Setting the formula to predict variable of interest using the 5 closest neighboring points
+  gs <- gstat(formula = as.formula(paste(i, "~1")), locations=mex_intersect, nmax=5, set=list(idp = 0))
+  
+  ##Inverse distance weighted interpolation
+  ##This takes some time to run.
+  nearest_neighbor <- interpolate(ras_comb, gs)
+  nn_mask <- mask(nearest_neighbor, mex_sp)
+  
+  f <- paste0('raster', i, '.tif')
+  writeRaster(nn_mask, filename=f, overwrite=TRUE)
+}
+
+trait.palette <- c("#F7E3E6", "#EAD5D9", "#DDC8CC", "#D1BBBF",
+                 "#C4ADB2", "#B7A0A5", "#AB9399", "#9E858C",
+                 "#91787F", "#856B72", "#785D65", "#6B5058", "#5F434C")
+
+#pdf("../output/RootDiveristy_SmoothedSpatial_AllPredictedTraits.pdf")
+#par(mfrow=c(4,3))
+#par(mar=c(2,2,2,2))
+#par(oma=c(0,0,0,0))
+
+predicted.traits <- c("Alt", "Ann.Mean.Tmp", "pH_H20_1m")
+
+##Read rasters
+for (i in c(predicted.traits)) {
+  
+  raster_pred <- paste0('../output/raster', i,'.tif')
+  raser_read <- raster(raster_pred)
+  plot(raser_read , asp=1, axes=F, box=F, main = i, col = trait.palette) 
+}
+
+#dev.off()
+```
+
+```{Figure 2, echo=FALSE}
+library(ggplot2)
+
+#######################################################################################################
+#A) Observed TSA.TCA, variables that were used to train the TSA.TCA RF model, and RF predicted TSA.TCA#
+#######################################################################################################
+world <- ne_countries(scale = "medium", returnclass = "sf")
+mexico.sf <- ne_countries(country="Mexico", returnclass = "sf")
+
+ggplot(data = world) +
+  ggtitle("Landraces from greenhouse experiments (Burton 39)")+
+  geom_sf() +
+  geom_point(aes(x=Longitude, y=Latitude, color=TSA.TCA), data=burton_full,
+             alpha = 1, size = 3) +
+  coord_sf(xlim = c(-120, -85), ylim = c(12,33), expand =TRUE) +
+    scale_colour_gradientn(colours=c("#F7E3E6","#5F434C")) 
+
+##The next three lines can be created in the "AnatomyRF.Rmd" script
+#variables that were used to train the TSA.TCA RF model
+#RF predicted TSA.TCA
+#SHapley Additive exPlanations (SHAP) plot
+
+##############################################################################
+#B)  RF predicted vs observed TSA:TCA values for individuals used in model training and validation#
+##############################################################################
+##Can be created using the "AnatomyRF.Rmd" script
+
+#####################################################################################################
+#C) GRANAR representations of observed and predicted sections with the most extreme observed TSA:TCA#
+#####################################################################################################
+## Files for this part live in https://github.com/HydraulicViper/RootDiversity
+
+##############################################################################
+#D) Radial conductivity using RF predicted phenotypes vs observed phenotypes#
+##############################################################################
+plot(KrKx$kr2, KrKx$kr2_pred, xlab=" Observed", ylab = "Predicted", pch=16, col="#AC9E57")
+line <- lm(KrKx$kr2_pred ~ KrKx$kr2)
+abline(line, col="gray")
+legend("bottomright", bty="n", legend=paste("R =", format(cor(KrKx$kr2,
+                                                              KrKx$kr2_pred), digits=4)))
+##We masked the outlier as it was an artifact of the MECHA model
+```
+
+```{Figure 3, echo = FALSE}
+#########################################################################
+#A) CIMMyT Panel colored by predicted cluster, elevation smoothed raster#
+#########################################################################
+##points colored by PAM cluster 
+clusters <-  read.csv("../data/CIMMYT_Anatomy_Clusters_k7.csv")
+
+ggplot(data = world) +
+  ggtitle("CIMMyT panel clored by predicted PAM cluster")+
+  geom_sf() +
+  geom_point(aes(x=Longitude, y=Latitude, color=as.factor(cluster)), data=clusters,
+             alpha = 0.5, size = 0.5) +
+  coord_sf(xlim = c(-120, -85), ylim = c(12,33), expand =TRUE) +
+  scale_color_manual(values= c("#66C2A5","#FC8D62","#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494"))
+
+##elevation smoothed raster is the same as made in Figure 1E
+
+################################
+#B) TSA:TCA boxplots by cluster#
+################################
+
+ggplot(clusters, aes(x = reorder(as.factor(cluster), -NMV_pred), y = scale(NMV_pred), fill =  as.factor(cluster))) + 
+  geom_boxplot() +
+  scale_fill_manual(values= c("#66C2A5","#FC8D62","#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494")) + 
+  xlab("clusters") + 
+  ylab("") + 
+  ggtitle("NMV")
+
+#############################
+#C) NMV boxplots by cluster#
+############################
+
+ggplot(clusters, aes(x = reorder(as.factor(cluster), -MVA_pred), y = scale(MVA_pred), fill =  as.factor(cluster))) + 
+  geom_boxplot() +
+  scale_fill_manual(values= c("#66C2A5","#FC8D62","#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494")) + 
+  xlab("clusters") + 
+  ylab("") + 
+  ggtitle("MVA")
+
+########################################################
+#D) Elevation vs Axial conductance for each PAM cluster#
+#######################################################
+
+cluster <- c("1", "2", "3", "4", "5", "6", "7")
+Alt <- c("502", "1912", "701", "1175","2249", "1889", "1193")
+Kx <-  c("7.47", "4.55", "6.15", "5.84", "4.14", "4.58", "6.74")
+
+cluster_dat <- data.frame(cluster, Alt, Kx)
+
+ggplot(cluster_dat, aes(x=Kx, y=as.numeric(Alt), color= as.factor(cluster), cex=5)) +
+  geom_point() +
+  scale_color_manual(values= c("#66C2A5","#FC8D62","#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494")) + 
+  theme_bw()
+
+## Files for GRANAR renderings live in https://github.com/HydraulicViper/RootDiversity
+## Enriched Races listed in Supplemetnal table 3 
+
+```
+
+```{Figure 4}
+###################################
+#A) Novel material source location#
+###################################
+magic  <- cimmyt_env %>% filter(Type == "MAGIC")
+
+ggplot(data = world) +
+  ggtitle("Novel material source location grown in this study")+
+  geom_sf() +
+  geom_point(aes(x=Longitude, y=Latitude, color = Race), data=magic,
+             alpha = 1, size = 3) +
+  coord_sf(xlim = c(-120, -85), ylim = c(12,33), expand =TRUE) +
+  scale_color_manual(values = c("#2586CC","#337C61", "#E1C34A", "#D8904F", "#725E5E", "#F0B3A2", "#88CF56","#A44638"))
+
+######################################################################################################################
+#B) Novel material source Alt, Ann.Mean.Tmp, and Ann.Prc over-layed over full CIMMyT  Alt, Ann.Mean.Tmp, and Ann.Prc##
+######################################################################################################################
+
+quants = c(0.05, 0.5,0.95) ##identify quantiles of env of interest
+cimmyt_df <- sapply(na.omit(cimmyt_env[,c("Alt", "Ann.Mean.Tmp","Ann.Prc")]), quantile, probs = quants)
+cimmyt_df <- as.data.frame(cimmyt_df)
+cimmyt_df$X1 <- c(1,1,1)
+
+magic$X1 <- c(1,1,1,1,1,1,1,1)
+
+loop.vector <- c("Alt", "Ann.Mean.Tmp","Ann.Prc") ##columns (env variables) to loop through from 'df/df2'
+for (i in loop.vector) { # Loop over loop.vector
+  x <- cimmyt_df[,i] 
+  y <- magic[,i]
+  plot(x, cimmyt_df$X1, 
+       type = 'o', 
+       pch = '|', 
+       ylab = colnames(magic)[i],
+       las=2,
+       xaxt='t',
+       axes=F
+       )
+  points(y, magic$X1, pch=16, cex=2, col=c("#D8904F","#725E5E","#F0B3A2", "#E1C34A","#A44638","#337C61","#2586CC","#88CF56"))
+}
+
+#####################################
+#C) Novel Material GRANAR renderings#
+#####################################
+magic_blup <- read.csv("../data/MAGIC_BLUPs_Race.csv")
+
+MAGIC_avg_1 <- magic_blup  %>%
+  mutate(RXSA = RXSA, 
+         r_CT = sqrt(RXSA/pi),
+         TSA = TSA,
+         TCA = TCA,
+         r_stele = sqrt(TSA/pi),
+         d_stele = r_stele*2,
+         r_cortex = r_CT - r_stele,
+         CCA = CCA,
+         X.A = X.A,
+         CC = CC_num, 
+         one_cell_area = (CCA/CC)*0.75,
+         cell_dia_cortex = (r_CT-r_stele)/round(CF_num),
+         n_layers_cortex = round(CF_num)-2, # endodermis and exodermis should not be associate to cortex cell
+         cell_dia_stele = 0.011, # between 9.4 and 13.5 micrometer (Steudle et al. 1993; Gao et al. 2015)
+         n_X = round(r_stele*33), # olometric link between the stele radius and the metaxylem size (Moreno-ortega 2016)
+         one_x = MA,
+         NMV = NMV,
+         max_size = 2*sqrt(one_x/pi))
+
+MAGIC_avg_2 <- rbind(MAGIC_avg_1 %>% mutate(id = 1))
+
+MAGIC_avg_2 <- MAGIC_avg_2%>%
+  mutate(repet = id,
+         id_sim = c(1:nrow(MAGIC_avg_2)),
+         name = "MAGIC_sim")
+
+#params <- read_param_xml("../output/Zea_mays_Heymans_2019.xml")
+
+k_list  <- as.list(which(MAGIC_avg_2$Race %in% c( 'CONICO', 'GORDO', 'JALA', 'NALTEL','PALOME','REVENT','TABLON','ZAPCHI')))
+
+sim <- list()
+
+RS_tot <- MAGIC_avg_2
+
+library(tidyverse)
+library(granar)
+library(conflicted)
+
+##select conflicted etc 
+#pdf("../output/MAGIC_W2and3_ObservedGRANAR_BLUP.pdf")
+
+for(id_sim in k_list){{
+  
+  temp <- RS_tot[id_sim,]
+  message(paste0(">>>>>> ", id_sim , " out of  ", nrow(RS_tot), " <<<<<<<"))
+  # Change the parameters --------------
+  #Stele
+  params$value[params$name == "stele" & params$type == "cell_diameter"] <- temp$cell_dia_stele
+  params$value[params$name == "stele" & params$type == "layer_diameter"] <- temp$d_stele-2*temp$cell_dia_stele
+  params$value[params$name == "xylem" & params$type == "max_size"] <- temp$max_size 
+  params$value[params$name == "xylem" & params$type == "n_files"] <- temp$NMV
+  params$value[params$name == "phloem" & params$type == "max_size"] <- temp$cell_dia_stele
+  params$value[params$name == "pericycle" & params$type == "cell_diameter"] <- temp$cell_dia_stele
+  params$value[params$name == "endodermis" & params$type == "cell_diameter"] <- temp$cell_dia_cortex
+  
+  #Cortex
+  params$value[params$name == "cortex" & params$type == "cell_diameter"] <- temp$cell_dia_cortex
+  params$value[params$name == "cortex" & params$type == "n_layers"] <- temp$n_layers_cortex
+  params$value[params$name == "exodermis" & params$type == "cell_diameter"] <- temp$cell_dia_cortex
+  params$value[params$name == "epidermis" & params$type == "cell_diameter"] <- temp$cell_dia_cortex*0.33
+  params$value[params$name == "aerenchyma" & params$type == "proportion"] <- temp$X.A/100
+  
+  t_before <- Sys.time()
+  
+  sim <- try(create_anatomy(parameters = params, verbatim=F), silent = TRUE)
+  } 
+  print(temp$Race)
+  plot(plot_anatomy(sim, leg=FALSE, col='area'))
+}
+
+#dev.off()
+
+##############################
+#D) Novel material procrustes#
+##############################
+library(vegan)
+
+pred_blup <- right_join(cimmyt[1:8,], magic_blup, by="Race")
+
+blup.pro <- pred_blup[c(5,3,7,8,2,6,1,4), c("Race","TSA.RXSA","TSA.TCA","AA","X.A","X.CCA","MA", "MD", "NMV", "MVA")] ##BLUPs of observed anatomy
+
+pred.pro <- pred_blup[c(5,3,7,8,2,6,1,4), c("Race","TSA.RXSA_pred","TSA.TCA_pred","AA_pred","X.A_pred","X.CCA_pred","MA_pred", "MD_pred", "NMV_pred", "MVA_pred")] ##RF predicted anatomy
+colnames(pred.pro) <- c("Race","TSA.RXSA","TSA.TCA","AA","X.A","X.CCA","MA", "MD", "NMV", "MVA" )
+
+pca.blup <- rda(blup.pro[,-1])
+
+pred.hel <- decostand(pred.pro[,-1], method = "hellinger")
+pca.pred <- rda(pred.hel)
+
+xx <- procrustes(pca.blup, pca.pred)
+plot(xx, kind = 1, type = "p")
+
+points(xx, display = c("target", "rotated"))
+labels <- c("ZAPCHI", "REVENT","CONICO","TABLON","PALOME","GORDO", "NALTEL", "JALA"  )
+text(xx, display = c("target", "rotated"),
+    choices = c(1,2), labels)
+
+#pdf("../output/Figure4/procrustes_errors.pdf")
+plot(xx, kind = 2, xaxt="n")
+axis(side=1, at=c(1,2,3,4,5,6,7,8), labels = labels, las=2)
+dev.off()
+vegan::plot.procrustes(xx)
+residuals(xx)
+plot()
+
+pro.obs <- as.data.frame(xx$X)
+pro.obs$type = "obs"
+
+pro.pred <- as.data.frame(xx$Yrot)
+names(pro.pred)[1] <- "PC1"
+names(pro.pred)[2] <- "PC2"
+pro.pred$type = "pred"
+
+data.df <- rbind(pro.obs, pro.pred)
+
+data.plot <- ggplot(data.df, aes(x = PC1 , y = PC2, color = type)) +
+  geom_point( size = 4, alpha = 0.5) +
+  theme_bw() +
+  theme(aspect.ratio = 1) +
+  #facet_wrap(~treatment, scales = 'free') +
+  labs(title = 'Procrustes analysis')
+
+data.plot
+
+#dev.off()
+###############################
+#E) Novel material obs/pred Kr#
+###############################
+mag_rxn <- KrKx %>% filter(type == "MAGIC")
+
+mag_obs <- mag_rxn[,c(1:2,11:17)] 
+mag_pred <- mag_rxn[,c(1:2,18:24)]
+
+mag_obs_scaled <- scale(mag_obs[,-c(1:2)])
+mag_pred_scaled <- scale(mag_pred[,-c(1:2)])
+
+mag_obs <- cbind(mag_obs[,1:2], mag_obs_scaled)
+mag_obs$class <- "observed"
+colnames(mag_obs) <- c("Accession","type","kr1","kr2","kr3","Kr1","Kr2","Kr3","Kx", "class")
+
+mag_pred <- cbind(mag_pred[,1:2], mag_pred_scaled)
+mag_pred$class <- "predicted"
+colnames(mag_pred) <- c("Accession","type","Kr1","kr1","Kr2","kr2","Kr3","kr3","Kx", "class")
+
+magic_rxn <- rbind(mag_obs, mag_pred)
+
+#pdf("../output/MAGIC_RXNnorms_Cond.pdf")
+
+magic_rxn %>%
+  ggplot(aes(x=class, y=c(Kr2), color = Accession)) + #"kr1_new""kr2_new""kr3_new" "Kr1""Kr2" "Kr3" "Kx" 
+  geom_point(aes(color = Accession), size = 4, alpha= 1) +
+  stat_summary(aes(group = Accession, color=Accession), fun.y = mean, geom = "path") +
+  scale_color_manual(values = c("#2586CC","#337C61", "#E1C34A", "#D8904F", "#725E5E", "#F0B3A2", "#88CF56","#A44638")) +
+  theme_bw() 
+
+###############################
+#F) Novel material obs/pred Kx#
+###############################
+
+magic_rxn %>%
+  ggplot(aes(x=class, y=c(Kx), color = Accession)) + #"kr1_new""kr2_new""kr3_new" "Kr1""Kr2" "Kr3" "Kx" 
+  geom_point(aes(color = Accession), size = 4, alpha= 1) +
+  stat_summary(aes(group = Accession, color=Accession), fun.y = mean, geom = "path") +
+  scale_color_manual(values = c("#2586CC","#337C61", "#E1C34A", "#D8904F", "#725E5E", "#F0B3A2", "#88CF56","#A44638")) +
+  theme_bw() 
+
+```
