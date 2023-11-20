@@ -6,7 +6,7 @@
 
 **CIMMYT_Anatomy_Clusters_k7.csv** CIMMYT panel predicted anatomy and assigned PAM cluster
 
-**CIMMyT_PredPhenoEnv.csv** CIMMYT panel predicted anaotmy and environment of origin
+**CIMMYT_PredPhenoEnv.csv** CIMMYT panel predicted anaotmy and environment of origin
 
 **HydraulicParametersMean_PredictedObserved.csv** Predicted and observed mean hydraulic parameters
 
