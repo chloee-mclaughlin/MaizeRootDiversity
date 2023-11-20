@@ -1,4 +1,4 @@
-#Includes all files used in the code folder 
+# Includes all files used in the code folder 
 
 **BorutaFeatures.rds** RDS object containing all environmentally related traits RF modes were built for and the aspects of environment that are used in the model 
 
