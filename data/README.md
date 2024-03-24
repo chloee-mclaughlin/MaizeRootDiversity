@@ -11,3 +11,5 @@
 **HydraulicParametersMean_PredictedObserved.csv** Predicted and observed mean hydraulic parameters
 
 **MAGIC_BLUPs_Race.csv** BLUPs of novel material phenotyped in this study 
+
+**widiv_taxa_175g.txt** name of 175 WIDP genotypes used in this study 
