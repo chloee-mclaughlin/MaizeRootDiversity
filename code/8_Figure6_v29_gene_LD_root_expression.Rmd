@@ -1,0 +1,216 @@
+---
+title: "LD_expression"
+author: "Meng Li"
+date: '2022-10-25'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd('D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/MAGMA')
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+```
+
+## LD plot using IntAssoPLot
+
+## load cimmyt genotypes, annotation
+1. load cimmyt genotypes, annotation
+
+```{r geno}
+load('Cimmyt_magma_input/cimmyt_genotype_file.Rimage')
+colm[colm ==3] <- NA
+
+cimmyt_ann_all <- read.csv('./gene_annotation/all_gene_annotation_with_cimmyt_2.5kb_long.csv', header = TRUE,row.names = 'X')
+
+```
+
+2.add SNPs to selected region and gene: cimmyt (from all gene annotation info)
+
+```{r SNP}
+# snps for selected genes
+
+# 235
+gene_select_235 <- cimmyt_ann_all %>% filter(GeneID %in% c('Zm00001d015397'))
+snp_geno_235 <- colm[intersect(row.names(colm),gene_select_235$Site),] %>% rownames_to_column(var = 'Site')
+
+
+```
+
+## load widiv genotypes, annotation
+
+```{r geno}
+library(data.table)
+
+widiv <- fread('../GxE_GWAS/Widiv/widiv_2015_175g_MAF_0.05_Tassel_numeric.txt')
+
+widiv_ann_all <- read.csv('./gene_annotation/all_gene_annotation_with_widiv_2.5kb_long.csv', header = TRUE,row.names = 'X')
+```
+
+2.add SNPs to selected region and gene: widiv (from all gene annotation info)
+
+```{r SNP}
+# snps for selected genes
+# 235: only one snp
+widiv_select_235 <- widiv_ann_all %>% filter(GeneID %in% c('Zm00001d015397'))
+#snp_geno_235 <- colm[intersect(row.names(colm),gene_select_235$Site),] %>% rownames_to_column(var = 'Site')
+```
+
+
+## LD map using IntAssoPLot
+
+235 cimmyt; widiv has only one snp
+```{ld2}
+library(IntAssoPlot)
+library(genetics)
+
+#----p values for SNPs-----#
+gene_235_association <- gene_select_235 %>% 
+    mutate(p = 0.01) %>%
+    dplyr::select(Site, Chr,Physical.Position,p) %>%
+    dplyr::rename(Marker = Site, Locus = Chr, Site = Physical.Position)
+
+#----LD heatmap gene----#
+g_235 <- snp_geno_235 %>% 
+      #dplyr::select('Site') %>%
+      filter(Site %in% gene_235_association$Marker) %>%
+      column_to_rownames(var = 'Site') %>%
+      filter(if_any(everything(), purrr::negate(is.na))) %>% # filter rows with all NAs
+      t() 
+geno_235 <- makeGenotypes(g_235,convert = 1:ncol(g_235), method = as.genotype.allele.count)
+
+gene_235_association.1 <- gene_235_association %>%
+    filter(Marker %in% colnames(g_235))
+
+# create a hapmap file from geno 
+hapmap_235 <- gene_235_association.1 %>%
+    dplyr:::select(Locus,Marker,Site) %>%
+    dplyr::rename(Site = Marker, CHR = Locus,pos = Site) %>%
+    left_join(rownames_to_column(as.data.frame(t(geno_235)),var = 'Site'), by = 'Site') %>%
+    dplyr::rename(`rs` = Site, chrom = CHR) %>%
+    mutate(allele = 'A/B', strand = NA, `assembly` = NA, center = NA, protLSID = NA, assayLSID = NA, panel = NA, QCcode=NA) %>%
+    dplyr::select(`rs`,allele, chrom, pos, strand, `assembly`, center, protLSID, assayLSID, panel, QCcode, SEEDGWAS2501:SEEDGWAS4784) %>%
+    mutate_at(vars(SEEDGWAS2501:SEEDGWAS4784), funs(case_when(
+        . == 'A/A' ~ 'AA',
+        . == 'A/B' ~ 'AB',
+        . == 'B/B' ~ 'BB'
+    ))) # need to change NA to "NN"
+
+which(is.na(hapmap_235[,12:1820]), arr.ind=TRUE)
+#    row  col
+#[1,]  16  510
+#[2,]  10 1119
+hapmap_235[,12:1820][16,510] <- 'NN'
+hapmap_235[,12:1820][10,1119] <- 'NN'
+# double check
+which(is.na(hapmap_235[,12:1820]), arr.ind=TRUE)
+
+# read gene model infomation 
+gene_235_info<- read.table('gene_model/Gene_Models_Chr5_88306260..88306964.gff3', header=FALSE)
+gene_235_info$V1 <- 5 #chr number to match association file
+
+# marker to highlight 
+gene_235_marker_highlight <- gene_235_association.1 %>%
+    dplyr::select(Marker, Locus, Site) %>%
+    dplyr::rename(rs = Marker, chrom = Locus, pos = Site) %>%
+    filter(rs %in% c('S5_88306863','S5_88306826')) %>%
+    mutate(shape = 17, colour = 'red', fill = 'red', size = 2)
+
+# marker to label 
+gene_235_marker_label <- gene_235_marker_highlight %>%
+    dplyr::select(rs, chrom, pos)
+
+# marker to link
+gene_235_marker_link <- gene_235_association.1 %>%
+    dplyr::select(Marker, Locus, Site) %>%
+    dplyr::rename(rs = Marker, chrom = Locus, pos = Site)
+
+
+#----plot the LD heatmap with gene models 
+IntGenicPlot('Zm00001d015397_T001', gene_235_info, association = gene_235_association.1, 
+             hapmap = hapmap_235, hapmap_ld = hapmap_235, leadsnp = FALSE,
+             threshold = 5, thresholdlinecolour= 'white', up=1000,down=1000,leadsnpLD = FALSE, exon_colour = 'black',
+             colour02 = "lightgray", colour04 = "lightgoldenrodyellow", 
+             colour06 = "yellow", colour08 = "orange", colour10 = "red",
+             link2gene=gene_235_marker_link,link2LD=gene_235_marker_link,
+             marker2highlight = gene_235_marker_highlight,
+             marker2label=gene_235_marker_label,marker2label_angle=0,marker2label_size=2.5)
+
+```
+
+## gene expression
+
+root expression data cleaning
+```{r expression}
+# extract all high root expression gene (root expression > expressions in other tissues)
+gene_expression <- read.csv('Gene_expression/all_gene_expression_avg_fpkm_Walley_2016.csv')
+# [1] "GENE"                                       "Cortex"                                    
+# [3] "EMBRYOS"                                    "embryos_20DAP"                             
+# [5] "endosperm_12DAP"                            "endosperm_crown"                           
+# [7] "EZ"                                         "GROWTH_ZONE"                               
+# [9] "Internode_6_7"                              "Internode_7_8"                             
+#[11] "mature_female_spikelets"                    "MATURE_LEAF_TISSUE_leaf_8"                 
+#[13] "Mature_pollen"                              "MZ"                                        
+#[15] "pericarp_aleurone"                          "PR"                                        
+#[17] "run_2_4_mm_from_tip_of_ear_primordium"      "run_6_8_mm_from_tip_of_ear_primordium"     
+#[19] "silks"                                      "SR"                                        
+#[21] "SYMMETRICAL_DIVISION_ZONE"                  "Vegetative_Meristem_and_surrounding_Tissue"
+
+exp_all_group <- gene_expression %>%
+    mutate_all(~replace(., is.na(.), 0)) %>%
+    pivot_longer(names_to = 'trait',values_to = 'value',cols = Cortex:Vegetative_Meristem_and_surrounding_Tissue) %>%
+    mutate(group = case_when(
+        trait %in% c("Internode_6_7","Internode_7_8", "Vegetative_Meristem_and_surrounding_Tissue",
+                     "GROWTH_ZONE","MATURE_LEAF_TISSUE_leaf_8","SYMMETRICAL_DIVISION_ZONE") ~ 'Leaf/Internode',
+        trait %in% c("EMBRYOS", "embryos_20DAP", "endosperm_12DAP", "endosperm_crown","pericarp_aleurone",
+                     "run_2_4_mm_from_tip_of_ear_primordium", "run_6_8_mm_from_tip_of_ear_primordium") ~ 'Ear',
+        trait %in% c('PR','Cortex','EZ','MZ','SR') ~ 'Root',
+        trait %in% c("mature_female_spikelets","Mature_pollen", "silks") ~ 'Tassel/Silk')) #%>%
+    #mutate(trait = case_when(trait == 'PR' ~ 'Primary',
+    #                 trait == 'EZ' ~ 'Elongation',
+    #                 trait == 'MZ' ~ 'Meristem',
+    #                 trait == 'SR' ~ 'Secondary',
+    #       TRUE ~ trait))
+
+exp_all_group$group <- factor(exp_all_group$group, levels = c('Leaf/Internode','Ear','Root','Tassel/Silk'), ordered = TRUE)
+
+write.csv(exp_all_group,file = 'Gene_expression/all_gene_expression_avg_fpkm_Walley_2016_grouped.csv')
+
+```
+
+ Region 235: Zm00001d015397
+```{235 expresion}
+Zm00001d015397_exp <- exp_all_group %>% filter(GENE == 'Zm00001d015397') %>% arrange(value)
+
+#ann_text <- Zm00001d023379_exp %>% 
+#    filter(trait %in% c('Cortex','Primary','Elongation','Meristem','Secondary'))
+
+ann_text <- Zm00001d015397_exp %>% 
+    filter(trait %in% c('Cortex','PR','EZ','MZ','SR'))
+
+ggplot(data = Zm00001d015397_exp, aes(x = reorder(trait, value), y = value)) +
+    geom_point(aes(fill = group),shape = 21, color = 'black',size = 2.5) +
+    geom_text(data = ann_text,label = ann_text$trait, nudge_y = 0.5, nudge_x = 0.2) +
+    scale_fill_manual(values = c('forestgreen','orange','brown','royalblue')) +
+    facet_wrap(~group, nrow = 1, scales = 'free_x') +
+    labs(title = 'Zm00001d012963') +
+    xlab('') +
+    ylab('Gene expression (FPKM)') +
+    theme_bw() +
+        theme(
+        axis.title.y = element_text( size=13),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size =12,color = 'black'),
+        axis.ticks.x = element_blank(),
+        legend.position = 'none',
+        strip.background = element_rect(fill = 'white'),
+        strip.text = element_text( size=13),
+        panel.grid = element_blank())
+
+```

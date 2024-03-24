@@ -1,0 +1,17 @@
+To use MAGMA, Plink binary input files are needed.
+1. Convert hapmap file to Plink text format (.ped/.map) using Tassel
+   Note: genotype data was obtained from this paper: https://doi.org/10.1186/s12870-019-1653-x; and filted by 175 genotypes.
+2. Convert Plink text format (.ped/.map) to Plink binary format (.bed/.bim/.fam) using Plink
+	a. download Plink windows-->extract files-->move plink.exe in the working directory
+	b. under Windows: RUN --> cmd
+	c. cd working directory
+	d. plink --file file_in --out file_out
+3. Apply gene annotation using MAGMA
+	a. download MAGMA window -->extract files-->move magma.exe to the working directory
+	b. move plink binary file sets and gene location file to the working directory
+	c. cd working directory
+	d. magma --annotate window=1 nonhuman --snp-loc plink_file.bim --gene-loc gene_model_noheader.txt --out file_name
+4. Move GWAS results to working directory
+5. Create a for loop to iterate files in the working directory
+	for %f in (*_specifiedstring.txt) do (magma --bfile WIDIV_2015_175g_genotype_MAF_0.05_filter.hmp.plk --gene-annot Widiv_2015_175g_ANNOTATION_1kb.genes.annot --pval %~nf.txt use=SNP,P_g N=175 --gene-model multi=snp-wise --out Result_folder\%~nf_multi_1kb)
+	# change 'use' to specify SNP and P column names

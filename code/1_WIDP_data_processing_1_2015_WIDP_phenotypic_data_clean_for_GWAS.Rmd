@@ -1,0 +1,397 @@
+---
+title: "2015_data_clean_for_GWAS"
+author: "Meng Li"
+date: "May 14, 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## 1. Read in data
+
+```{r data}
+library(lattice)
+library(tibble)
+library(tidyr)
+library(dplyr)
+
+# 2015 root data
+raw_2015_anatomy <- read.csv('data/ARBC_WiDiv_Anatomy_2015_clean.csv')
+names(raw_2015_anatomy)
+raw_2015_archit <- read.csv('data/ARBC_WiDiv_Architecture_2015_clean.csv',fileEncoding = 'UTF-8-BOM')
+names(raw_2015_archit)
+raw_2015_archit_2<-raw_2015_archit %>% select('Taxa','Year','Treatment','Rep','DIA_STM','DISTFL')
+
+root_2015_clean <- inner_join(raw_2015_anatomy,raw_2015_archit_2,by = c('Year','Taxa','Treatment','Rep')) %>% droplevels()
+names(root_2015_clean)
+#"Year"      "Treatment" "Plot"      "Rep"       "Taxa"      "MEDMETVA"  "MEDMETVD"  "TMETVA"    "NOMETV"    "RXSA" "TCA"       "TSA"       "AA"        "RCA"       "CCFN"      "CCS"       "ANG_TOP"   "LL"        "BF"        "BIOTOTAL" "BIOVEG"    "BIOREPRO"  "YIELD"     "DIA_STM"   "DISTFL" 
+
+# Check data
+root_2015_long <- root_2015_clean %>%
+      pivot_longer(names_to = 'trait', values_to = 'value', cols = MEDMETVA:DISTFL)      
+
+bwplot(value ~ trait, data = root_2015_long)
+
+#hist(root_2015_clean$MEDMETVA)
+#boxplot(root_2015_clean$MEDMETVA)$out
+#hist(root_2015_clean$LL) #maybe not normal
+#hist(root_2015_clean$BF) #maybe not normal
+#hist(root_2015_clean$BIOVEG)
+#boxplot(root_2015_clean$BIOVEG)$out #the extrem data seems not due to error
+#outliers::chisq.out.test(root_2015_2016_1$BIOVEG)
+#hist(root_2015_clean$DISTFL) #maybe not normal
+hist(root_2015_clean$CCS)
+boxplot(root_2015_clean$YIELD)$out
+```
+
+## 2. Adjust the plot (spacial) effect with spline function for each trait in every rep*treatment 
+
+```{r spline}
+library(dplyr)
+
+root_2015_clean_1 <- root_2015_clean %>%  #replace yield extreme outlier with NA
+      mutate(YIELD = na_if(YIELD, 541.2),
+             YIELD = na_if(YIELD, 319.5))
+
+# spline adjust values by looping through the i trait, r rep, and t treatment
+      for (i in 6:25) {
+            for (r in 1:2){  
+                  for (t in 1:2){
+            spline.x <- root_2015_clean_1$Plot[root_2015_clean_1$Rep==r & root_2015_clean_1$Treatment == levels(root_2015_clean_1$Treatment)[t]]
+            spline.y <- root_2015_clean_1[root_2015_clean_1$Rep ==r & root_2015_clean_1$Treatment == levels(root_2015_clean_1$Treatment)[t],i]
+            spline.x <- spline.x[!is.na(spline.y)]
+            spline.y <- spline.y[!is.na(spline.y)]
+            plot(spline.x,spline.y,main=paste(colnames(root_2015_clean_1)[i], "Rep",r,levels(root_2015_clean_1$Treatment)[t]))
+            spline <- smooth.spline(spline.x,spline.y)
+            lines(spline$x,spline$y,col="BLUE")
+            block.mean = mean(spline.y)
+            abline(h=block.mean,col="GREEN")
+            adjust=block.mean-predict(spline,spline.x)$y
+            points(spline.x,spline.y+adjust,col="RED")
+            spline.adj <- smooth.spline(spline.x,spline.y+adjust)
+            lines(spline.adj$x,spline.adj$y,col="RED")
+            root_2015_clean_1[root_2015_clean_1$Plot %in% spline.adj$x,i] <- spline.y+adjust
+            }
+      } 
+}
+
+root_2015_adj <- root_2015_clean_1
+
+root_2015_adj_new <- root_2015_adj %>%
+  mutate(TSA.RXSA = TSA/RXSA, TSA.TCA = TSA/TCA)
+
+```
+
+## 3. Test linear mixed models
+
+```{r model}
+library(lme4)
+library(tidyr)
+library(dplyr)
+library(tibble)
+library(ggpubr)
+
+str(root_2015_adj)
+names(root_2015_adj)
+#[1] "Year"      "Treatment" "Plot"      "Rep"       "Taxa"      "MEDMETVA"  "MEDMETVD"  "TMETVA"    "NOMETV"    "RXSA"      "TCA"       "TSA"       "AA"        "RCA"       "CCFN"     
+#[16] "CCS"       "ANG_TOP"   "LL"        "BF"        "BIOTOTAL"  "BIOVEG"    "BIOREPRO"  "YIELD"     "DIA_STM"   "DISTFL"
+
+#convert variables to factors
+root_2015_adj$Rep <- as.factor(root_2015_adj$Rep)
+root_2015_adj$Taxa <- as.factor(root_2015_adj$Taxa)
+
+#run test models
+#model_1 <- lmer(YIELD ~  0 + Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Rep), data = root_2015_adj)
+#model_2 <- lmer(YIELD ~ 0 + Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Rep) + (1|Treatment:Rep), data = root_2015_adj)
+
+model_3 <- lmer(CCS ~ Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Treatment:Rep), data = root_2015_adj)
+
+coef(model_3)
+
+ranef(model_3)$Taxa
+
+shapiro.test(resid(model_3))
+
+model_4 <- lmer(CCS ~ 1 + (1|Treatment:Taxa) +(1|Taxa) + (1|Treatment:Rep), data = root_2015_adj)
+coef(model_4)
+ranef(model_4)
+
+glmm_model_3 <- glmer(CCS ~ Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Treatment:Rep), data = root_2015_adj, family = 'binomial')
+
+AIC(model_1,model_2,model_3)
+anova(model_1,model_2,model_3)
+
+# CCFN and TCA can't converge with model 3; LL,BF,DISTFL are not normal, with zero variance; model 3 is the best for the rest of variables
+# LL, BF, DISTFL are uniformly distributed, may need to use glmer.
+
+```
+
+## 4. Loop through traits and extract Blups, coef, and Heritability
+
+```{r Blup}
+library(lme4)
+library(purrr)
+library(tidyr)
+library(dplyr)
+library(tibble)
+
+root_2015_adj_1 <- root_2015_adj_new %>% select(-c(LL, BF, DISTFL, BIOTOTAL)) # BioTotal is equal to Bioveg; LL,BF,DISTFL are uniformly distributed
+# extract taxa blup
+root_2015_geno_blup <- root_2015_adj_1 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ ranef(lmer(value ~ Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Treatment:Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) 
+
+# extract taxa coef
+root_2015_geno_coef <- root_2015_adj_1 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ coef(lmer(value ~ 0 + Treatment + (1|Treatment:Taxa) +(1|Taxa) + (1|Treatment:Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) 
+
+# get Treatment*genotype BLUPs
+root_2015_g_t_blup <- root_2015_adj_1 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ ranef(lmer(value ~ Treatment + (1|Treatment:Taxa) +(1|Taxa) +(1|Treatment:Rep), data = .,))$`Treatment:Taxa`)) %>%
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>%
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) %>%
+      separate(Taxa, c("Treatment","Taxa"), ":")
+
+# extract heritability
+root_2015_H2 <- root_2015_adj_1 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(varaince = purrr::map(data, ~ as.data.frame(VarCorr(lmer(value ~ Treatment + (1|Treatment:Taxa) +(1|Taxa) +(1|Treatment:Rep), data = .,)))[,c(1,4)])) %>% #extract variance of random effect
+      mutate(variance_df = purrr::map(varaince, ~ as.data.frame(t(column_to_rownames(., var = "grp"))))) %>% # get data ready for H2 
+      mutate(BH = purrr::map(variance_df, ~ (.$Taxa)/(.$Taxa + .$Residual))) %>%
+      mutate(NH = purrr::map(variance_df, ~ (.$Taxa)/(.$Taxa + (.$`Treatment:Taxa`/2) + (.$Residual/4)))) %>% #treatment =2, treatment*rep =4
+      unnest(c(BH, NH)) %>%
+      select(trait,BH, NH) 
+
+```
+
+## 5. Extract Blups and Heritability for ws and ww separatly
+
+```{r Blup}
+library(lme4)
+library(purrr)
+library(tidyr)
+library(dplyr)
+library(tibble)
+
+#root_2015_adj_trt <- root_2015_adj %>% select(-BIOTOTAL) # BioTotal is equal to Bioveg; LL,BF,DISTFL are uniformly distributed, can use the raw data
+
+ww_2015 <- root_2015_adj_1 %>% filter(Treatment == 'ww')
+ws_2015 <- root_2015_adj_1 %>% filter(Treatment == 'ws')
+
+### -----------ww----------###
+#run test models
+model_ww_1 <- lmer(CCS~ 1 +(1|Taxa) + (1|Rep), data = ww_2015)
+coef(model_ww_1)
+ranef(model_ww_1)
+
+model_ww_2 <- lmer(TSA ~ 1 + (1|Taxa), data = ww_2015)
+
+AIC(model_ww_1,model_ww_2) # model 1 works for most variables
+
+# extract taxa blup
+ww_2015_geno_blup <- ww_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ ranef(lmer(value ~ 1 +(1|Taxa) + (1|Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) # if model failed to converge, the fixed effect maybe underestimated, which was not a interest in this model.
+
+# extract taxa coef = fix + random
+ww_2015_geno_coef <- ww_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ coef(lmer(value ~ 1 +(1|Taxa) + (1|Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) # if model failed to converge, the fixed effect maybe underestimated, which was not a interest in this model.
+
+
+# extract heritability
+ww_2015_H2 <- ww_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(varaince = purrr::map(data, ~ as.data.frame(VarCorr(lmer(value ~ 1 + (1|Taxa) + (1|Rep), data = .,)))[,c(1,4)])) %>% #extract variance of random effect
+      mutate(variance_df = purrr::map(varaince, ~ as.data.frame(t(column_to_rownames(., var = "grp"))))) %>% # get data ready for H2 
+      mutate(BH = purrr::map(variance_df, ~ (.$Taxa)/(.$Taxa + .$Residual))) %>%
+      unnest(BH) %>%
+      select(trait,BH) 
+
+### -----------ws----------###
+#run test models
+model_ws_1 <- lmer(CCS~ 1 +(1|Taxa) + (1|Rep), data = ws_2015)
+ranef(model_ws_1)
+coef(model_ws_1)
+model_ws_2 <- lmer(AA ~ 1 + (1|Taxa), data = ws_2015)
+
+AIC(model_ws_1,model_ws_2) # model 1 works for most variables
+
+# extract taxa blup
+ws_2015_geno_blup <- ws_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ ranef(lmer(value ~ 1 +(1|Taxa) + (1|Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) 
+
+# extract taxa coef
+ws_2015_geno_coef <- ws_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:TSA.TCA) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(blup = purrr::map(data, ~ coef(lmer(value ~ 1 +(1|Taxa) + (1|Rep), data = .,))$Taxa)) %>% #extract blup
+      mutate(df = purrr::map(blup, ~ rownames_to_column(., var = "Taxa"))) %>% # extract taxa names
+      unnest(df) %>%
+      select(trait, Taxa, `(Intercept)`) %>%
+      pivot_wider(names_from = trait,values_from = `(Intercept)`) 
+
+# extract heritability
+ws_2015_H2 <- ws_2015 %>%
+      pivot_longer(names_to = 'trait', values_to = 'value',cols = MEDMETVA:DIA_STM) %>%
+      group_by(trait) %>%
+      nest() %>%
+      mutate(varaince = purrr::map(data, ~ as.data.frame(VarCorr(lmer(value ~ 1 + (1|Taxa) + (1|Rep), data = .,)))[,c(1,4)])) %>% #extract variance of random effect
+      mutate(variance_df = purrr::map(varaince, ~ as.data.frame(t(column_to_rownames(., var = "grp"))))) %>% # get data ready for H2 
+      mutate(BH = purrr::map(variance_df, ~ (.$Taxa)/(.$Taxa + .$Residual))) %>%
+      unnest(BH) %>%
+      select(trait,BH) 
+
+```
+
+## 6. Plotting 
+
+```{r plot}
+library(lattice)
+
+root_2015_adj_mean <- root_2015_adj_1 %>%
+      select(-c(DIA_STM, BIOREPRO)) %>%
+      pivot_longer(names_to = 'Trait', values_to = 'Value', cols = MEDMETVA:YIELD) %>%
+      group_by(Trait, Taxa, Treatment) %>%
+      summarise(mean = mean(Value, na.rm = TRUE)) %>%
+      pivot_wider(names_from = 'Trait', values_from = 'mean')
+
+#bwplot(mean ~ Treatment | Trait, data = root_2015_adj_mean, scales = list(relation = "free"))
+
+# genptype blup
+root_2015_geno_blup$source <- 'root_blup'
+
+root_2015_g_t_blup$source <- 'root_g_t_blup'
+
+ww_2015_geno_blup$source <- 'ww_blup'
+
+ws_2015_geno_blup$source <- 'ws_blup'
+
+all_blup <- rbind(root_2015_geno_blup,ww_2015_geno_blup,ws_2015_geno_blup)
+
+write.csv(all_blup, 'Cleaned_data_2015/Genotype_blup.csv')
+
+ww_2015_geno_coef$Treatment <- 'ww'
+
+ws_2015_geno_coef$Treatment <- 'ws'
+
+ww_ws_coef <- rbind.data.frame(ww_2015_geno_coef,ws_2015_geno_coef)
+
+write.csv(ww_ws_coef, 'Cleaned_data_2015/ww_ws_coef_from_separate_model.csv')
+
+ww_ws_coef_long <- ww_ws_coef %>%
+      pivot_longer(names_to = 'trait', values_to = 'value', cols = MEDMETVA:DIA_STM)
+
+bwplot(value ~ Treatment | trait, data = ww_ws_coef_long,scales = list(relation = "free"))
+
+# interaction blup
+write.csv(root_2015_g_t_blup, 'Cleaned_data_2015/Genotype_Treatment_blup.csv')
+
+# H2 
+all_H2 <- cbind.data.frame(root_2015_H2$trait,root_2015_H2$BH,root_2015_H2$NH, ww_2015_H2$BH, ws_2015_H2$BH) %>%
+      pivot_longer(names_to = 'group',values_to = 'H2', cols = `root_2015_H2$BH` : `ws_2015_H2$BH`)
+
+write.csv(all_H2, 'heritability.csv')
+
+# interaction blup
+
+root_g_t_blup <- root_2015_g_t_blup %>%
+      pivot_longer(names_to = 'Trait', values_to = 'Value', cols = MEDMETVA:DIA_STM)
+
+bwplot(Value ~ Treatment | Trait, data = root_g_t_blup, scales = list(relation = "free"))
+
+```
+
+## 7. Load widiv pedigree and subpopulation informaiton
+
+```{r supp}
+library(dplyr)
+
+widiv_subpop <- read.csv('widiv_pedigree_subpopulation_information_taxa_corrected.csv', header = T,fileEncoding = 'UTF-8-BOM')
+names(widiv_subpop)
+
+#rename column
+colnames(widiv_subpop)[1] <- 'Taxa'
+names(widiv_subpop)
+
+#select column
+widiv_subpop_clean <- widiv_subpop %>%
+  select(Taxa, Subpopulation) %>%
+      droplevels()
+str(widiv_subpop_clean)
+
+#pull out subpopulation data that match with phenotypic and genotypic data
+root_2015_geno_blup_subp <- left_join(root_2015_geno_blup, widiv_subpop_clean, by ='Taxa') 
+
+root_2015_g_t_blup_subp <- left_join(root_2015_g_t_blup, widiv_subpop_clean, by ='Taxa') 
+
+ww_2015_geno_blup_subp <- left_join(ww_2015_geno_blup, widiv_subpop_clean, by ='Taxa') 
+
+ws_2015_geno_blup_subp <- left_join(ws_2015_geno_blup, widiv_subpop_clean, by ='Taxa') 
+
+root_2015_geno_blup_subp$source <- 'root_blup'
+
+root_2015_g_t_blup_subp$source <- 'root_g_t_blup'
+
+ww_2015_geno_blup_subp$source <- 'ww_blup'
+
+ws_2015_geno_blup_subp$source <- 'ws_blup'
+
+all_blup_subp <- rbind(root_2015_geno_blup_subp,
+                       ww_2015_geno_blup_subp,
+                       ws_2015_geno_blup_subp)
+
+write.csv(all_blup_subp, 'Cleaned_data_2015/Genotype_add_ratio_blup_with_subpop_information.csv')
+
+# interaction blup
+#write.csv(root_2015_g_t_blup_subp, 'Cleaned_data_2015/Genotype_Treatment_blup_with_subpop_information.csv')
+
+```
+

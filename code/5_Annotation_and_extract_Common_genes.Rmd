@@ -1,0 +1,516 @@
+---
+title: "Common_genes"
+author: "Meng Li"
+date: "12/15/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#setwd('D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/MAGMA')
+
+setwd('C:/Users/limen/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/MAGMA')
+
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install('GenomicRanges')
+
+library(GenomicRanges)
+library(dplyr)
+library(tidyverse)
+library(data.table)
+
+```
+
+## Read gene model and site info for Widiv and Cimmyt
+
+1. Read gene model and CIMMYT site info
+```{r read}
+
+gene_model <- read.csv("D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/AGPv4.36_gene_model/AGPv4.36.Genes.csv",header = TRUE)
+
+cimmyt_site <- read.csv("D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/Dan_Gates_code/Genotypes/Dan_genotype_site_summary.csv", header = TRUE, row.names = 'X')
+
+widiv_site <- read.csv("D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/GxE_GWAS/Widiv/Widiv_2015_175g_site_summary.csv", header = TRUE)
+
+```
+
+## Get gene annotation for CIMMYT data and widiv
+
+2. Gene annotation: +/- 2.5kb around genes
+
+```{r annotation}
+# add 2.5kb before and after each gene
+gene_model_2.5 <- gene_model %>%
+    mutate(Start_2.5kb = Start - 2500,
+           End_2.5kb = End + 2500) %>%
+    dplyr::rename(Gene_width = Width)
+
+# convert gene models dataframe to a GRanges object
+gene_model_2.5_GRanges <- makeGRangesFromDataFrame(gene_model_2.5,keep.extra.columns = TRUE,ignore.strand = TRUE,seqnames.field = 'Chr', start.field = 'Start_2.5kb', end.field = 'End_2.5kb')
+
+#---------------cimmyt-------------------#
+# convert cimmyt site dataframe to a GRanges object
+cimmyt_site_GRanges <- makeGRangesFromDataFrame(cimmyt_site, seqnames.field = 'Chromosome',keep.extra.columns = TRUE, ignore.strand = TRUE,start.field = 'Physical.Position',end.field = 'Physical.Position')
+
+# extract Genes with at least one marker overlap
+cimmyt_gene <- as.data.frame(findOverlaps(cimmyt_site_GRanges,gene_model_2.5_GRanges, ignore.strand = TRUE))
+
+# extract the SNP that hit genes
+cimmyt_hits <- as.data.frame(cimmyt_site_GRanges[cimmyt_gene$queryHits])
+# add the names of the genes
+hits_geneID <- as.data.frame(gene_model_2.5_GRanges[cimmyt_gene$subjectHits])
+
+cimmyt_gene_annotation <- cbind.data.frame(cimmyt_hits$Site, hits_geneID[,c("GeneID","seqnames","Start","End","Gene_width","Strand")])
+
+cimmyt_gene_annotation_long <- cimmyt_gene_annotation %>%
+  dplyr::rename(Site = `cimmyt_hits$Site`, Chr = seqnames) %>%
+  left_join(cimmyt_site[,c(1,3)], by = 'Site')
+
+write.csv(cimmyt_gene_annotation_long, file = 'cimmyt_gene_annotation_2.5kb_long.csv')
+
+cimmyt_gene_annotation.1 <- cimmyt_gene_annotation %>% 
+    dplyr::rename(Marker = `cimmyt_hits$Site`, Chr = seqnames) %>%
+    group_by(GeneID) %>%
+    summarise(Marker = paste(unique(Marker), collapse = ' '),
+              Chr, Start,End,Gene_width,Strand) %>%
+    dplyr::rename(Width = Gene_width) %>%
+    unique()
+
+write.csv(cimmyt_gene_annotation.1, file = 'cimmyt_gene_annotation_2.5kb.csv')
+
+#-----------------widiv------------------#
+widiv_site_GRanges <- makeGRangesFromDataFrame(widiv_site, seqnames.field = 'Chr',keep.extra.columns = TRUE, ignore.strand = TRUE,start.field = 'BP',end.field = 'BP')
+
+# extract Genes with at least one marker overlap
+widiv_gene <- as.data.frame(findOverlaps(widiv_site_GRanges,gene_model_2.5_GRanges, ignore.strand = TRUE))
+
+# extract the SNP that hit genes
+widiv_hits <- as.data.frame(widiv_site_GRanges[widiv_gene$queryHits])
+# add the names of the genes
+hits_geneID <- as.data.frame(gene_model_2.5_GRanges[widiv_gene$subjectHits])
+
+widiv_gene_annotation <- cbind.data.frame(widiv_hits$SNP, hits_geneID[,c("GeneID","seqnames","Start","End","Gene_width","Strand")])
+
+widiv_gene_annotation.1 <- widiv_gene_annotation %>% 
+    dplyr::rename(Marker = `widiv_hits$SNP`, Chr = seqnames) %>%
+    group_by(GeneID) %>%
+    summarise(Marker = paste(unique(Marker), collapse = ' '),
+              Chr, Start,End,Gene_width,Strand) %>%
+    dplyr::rename(Width = Gene_width) %>%
+    unique()
+
+write.csv(widiv_gene_annotation.1, file = 'widiv_gene_annotation_2.5kb.csv')
+
+widiv_gene_annotation_long <- widiv_gene_annotation %>%
+  dplyr::rename(SNP = `widiv_hits$SNP`, Chr = seqnames) %>%
+  left_join(widiv_site[,c(2,3)], by = 'SNP')
+
+#write.csv(widiv_gene_annotation_long, file = 'gene_annotation/widiv_gene_annotation_2.5kb_long.csv')
+
+```
+
+## Extract common genes
+
+```{r common}
+# common genes
+common_gene <- intersect(drop_na(widiv_gene_annotation.1, GeneID)$GeneID, drop_na(cimmyt_gene_annotation.1, GeneID)$GeneID)
+#21883
+write.table(common_gene, file = 'Common_gene_list_widiv_CIMMTY.txt',quote = FALSE, sep = '', row.names = FALSE, col.names = FALSE)
+
+common_gene_ann <- cimmyt_gene_annotation.1 %>%
+  dplyr::select(-Marker)  %>%
+  filter(GeneID %in% common_gene)
+
+write.csv(common_gene_ann, file = 'gene_annotation/cimmyt_widiv_common_gene_annotation_2.5kb.csv', row.names = FALSE)
+
+# venn diagram
+library(VennDiagram)
+
+venn.diagram(
+        x = list(unique(drop_na(widiv_gene_annotation.1, GeneID)$GeneID), unique(drop_na(cimmyt_gene_annotation.1, GeneID)$GeneID)),
+        category.names = c("Widiv (24099)" , "CIMMIYT (28898)" ),
+        main = 'Overlap genes',
+        filename = 'Overlap_genes_widiv_CIMMIYT.png',
+        cat.dist = c(-0.001, -0.001), # Modified
+        #cat.pos = c(-0, 90), # Modified
+        output=FALSE)
+
+```
+
+## Extract SNPs to remove for gene-level analysis: these SNPs that are not belonged to common genes
+
+```{r remove}
+
+cimmyt_snps_rm <- cimmyt_gene_annotation_long %>%
+  filter(!(GeneID %in% common_gene)) 
+
+cimmyt_snps_rm_list <- unique(cimmyt_snps_rm$Site) #72661
+  
+write.table(cimmyt_snps_rm_list, quote = FALSE, col.names = FALSE, row.names = FALSE, file = 'common_gene/cimmyt_snps_not_in_common_genes.txt')
+
+```
+
+## Extract top 100 common genes from widiv gene analysis results
+
+with selected root traits
+```{r genes}
+
+common_gene <- read.table('common_gene/Common_gene_list_widiv_CIMMTY_2.5kb.txt')$V1
+
+#-------------------g----------------------#
+# Data from MAGMA gene results 
+# create a list for file names
+#c('AA','RCA','MMA', 'MMD', 'MVA', 'NMV', 'TSA.RXSA','TSA.TCA')
+trait.list <- c('AA','RCA','MEDMETVA', 'MEDMETVD', 'TMETVA', 'NOMETV', 'TSA.RXSA','TSA.TCA')
+
+# extract site names and combine into a single dataframe
+combine_function <- function(x) { 
+      
+      df <-fread(file = paste0('Widiv_2.5kb_g/',x,'_G_GxE_GWAS_fitted_result_multi_g_2.5kb.genes.out.txt'), skip = 1)  # read text files, skip first line
+      
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list<-lapply(trait.list, combine_function) 
+
+# row bind dataframes
+widiv_g_top_100_common_gene <-do.call(rbind,data_list) 
+
+widiv_g_top_100_common_gene.1 <- widiv_g_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) 
+
+widiv_g_top_100_common_gene.2 <- widiv_g_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) %>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique()
+
+write.csv(widiv_g_top_100_common_gene.1, file = 'common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_long.csv')
+write.csv(widiv_g_top_100_common_gene.2, file = 'common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_collapse.csv')
+
+#------------------gxe-------------------#
+combine_function_gxe <- function(x) { 
+      
+      df <-fread(file = paste0('Widiv_2.5kb_gxe/',x,'_G_GxE_GWAS_fitted_result_multi_gxe_2.5kb.genes.out.txt'), skip = 1)  # read text files, skip first line
+      
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_gxe<-lapply(trait.list, combine_function_gxe) 
+
+# row bind dataframes
+widiv_gxe_top_100_common_gene <-do.call(rbind,data_list_gxe) 
+
+widiv_gxe_top_100_common_gene.1 <- widiv_gxe_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait))
+
+widiv_gxe_top_100_common_gene.2 <- widiv_gxe_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) %>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique()
+
+write.csv(widiv_gxe_top_100_common_gene.1, file = 'common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_long.csv')
+write.csv(widiv_gxe_top_100_common_gene.2, file = 'common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_collapse.csv')
+
+```
+
+all traits in widiv
+
+```{r genes}
+
+common_gene <- read.table('common_gene/Common_gene_list_widiv_CIMMTY_2.5kb.txt')$V1
+
+#-------------------g----------------------#
+# Data from MAGMA gene results 
+# create a list for file names
+#overlap traits: c('AA','RCA','MMA', 'MMD', 'MVA', 'NMV', 'TSA.RXSA','TSA.TCA')
+
+#trait.list <- c('AA','RCA','MEDMETVA', 'MEDMETVD', 'TMETVA', 'NOMETV', 'TSA.RXSA','TSA.TCA')
+
+trait.list_all <-c( "AA","ANG_TOP","CCFN","CCS","MEDMETVA", "MEDMETVD", "NOMETV", "RCA","RXSA", "TCA","TMETVA", 
+                    "TSA","TSA.RXSA", "TSA.TCA","YIELD")  
+# extract site names and combine into a single dataframe
+combine_function <- function(x) { 
+      
+      df <-fread(file = paste0('Widiv_2.5kb_g/',x,'_G_GxE_GWAS_fitted_result_multi_g_2.5kb.genes.out.txt'), skip = 1)  # read text files, skip first line
+      
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_all<-lapply(trait.list_all, combine_function) 
+
+# row bind dataframes
+widiv_g_top_100_common_gene_all_traits <-do.call(rbind,data_list_all) 
+
+widiv_g_top_100_common_gene_all_traits.1 <- widiv_g_top_100_common_gene_all_traits %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) 
+
+widiv_g_top_100_common_gene_all_traits.2 <- widiv_g_top_100_common_gene_all_traits %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) %>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique()
+
+write.csv(widiv_g_top_100_common_gene_all_traits.1, file = 'common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_all_traits_long.csv')
+#write.csv(widiv_g_top_100_common_gene_all_traits.2, file = 'common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_all_traits_collapse.csv')
+
+#------------------gxe-------------------#
+combine_function_gxe <- function(x) { 
+      
+      df <-fread(file = paste0('Widiv_2.5kb_gxe/',x,'_G_GxE_GWAS_fitted_result_multi_gxe_2.5kb.genes.out.txt'), skip = 1)  # read text files, skip first line
+      
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_gxe<-lapply(trait.list_all, combine_function_gxe) 
+
+# row bind dataframes
+widiv_gxe_top_100_common_gene_all_traits <-do.call(rbind,data_list_gxe) 
+
+widiv_gxe_top_100_common_gene_all_traits.1 <- widiv_gxe_top_100_common_gene_all_traits %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait))
+
+widiv_gxe_top_100_common_gene_all_traits.2 <- widiv_gxe_top_100_common_gene_all_traits %>% 
+  mutate(trait = case_when(trait == 'MEDMETVA' ~ 'MMA',
+                              trait == 'MEDMETVD' ~ 'MMD',
+                              trait == 'TMETVA' ~ 'MVA',
+                              trait == 'NOMETV' ~ 'NMV', TRUE ~ trait)) %>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique()
+
+write.csv(widiv_gxe_top_100_common_gene_all_traits.1, file = 'common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_all_traits_long.csv')
+#write.csv(widiv_gxe_top_100_common_gene.2, file = 'common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_collapse.csv')
+
+```
+
+
+## Extract top 100 common genes from predicted root gene analysis results
+
+```{r root_pred}
+common_gene <- read.table('common_gene/Common_gene_list_widiv_CIMMTY_2.5kb.txt')$V1
+
+trait.list_pred <- c('AA','X.A','MMA', 'MMD', 'MVA', 'NMV', 'TSA.RXSA','TSA.TCA')
+
+# extract site names and combine into a single dataframe
+combine_function_pred <- function(x) { 
+      
+      df <-fread(file = paste0('Predicted_roots/cimmyt_pred_mexi_',x,'_pred_pscovar_1656_MAF0.05.genes.out.txt'), skip = 1)  # read text files, skip first line
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_pred<-lapply(trait.list_pred, combine_function_pred) 
+
+# row bind dataframes
+pred_root_top_100_common_gene <-do.call(rbind,data_list_pred) 
+
+pred_root_top_100_common_gene.1 <- pred_root_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'X.A' ~ 'RCA',TRUE ~ trait)) 
+
+pred_root_top_100_common_gene.2 <- pred_root_top_100_common_gene %>% 
+  mutate(trait = case_when(trait == 'X.A' ~ 'RCA',TRUE ~ trait))%>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique()
+
+write.csv(pred_root_top_100_common_gene.1, file = 'common_gene/pred_root_top_100_common_gene_MAGMA_2.5kb_long.csv')
+write.csv(pred_root_top_100_common_gene.2, file = 'common_gene/pred_root_top_100_common_gene_MAGMA_2.5kb_collapse.csv')
+
+```
+
+## Extract top 100 common genes from selected env gene analysis results
+
+```{r root_pred}
+common_gene <- read.table('common_gene/Common_gene_list_widiv_CIMMTY_2.5kb.txt')$V1
+
+#root_trait.list <- c('AA','X.A','MMA', 'MMD', 'MVA', 'NMV', 'TSA.RXSA','TSA.TCA')
+
+env_list <- unique(c('CACO3', 'BS', 'PARWin', #AA
+              'BS', 'PARFall', #X.A
+              'coarse_1m', 'tmax_2', 'tmean_3', 'pet_4',  #MMA
+              'tmax_2', 'tmax_3', 'tmax_4', 'tmin_3','tmean_3', 'tmean_5', 'Ann.Mean.Tmp', # MMD
+              'tmax_1', 'tmax_2', 'tmax_3', 'tmax_4', 'tmax_11', 'tmax_12', 'tmin_3', 'tmin_4', 'tmin_5', 'tmean_2', 'tmean_3', 'tmean_4', 'tmean_5', 'tmean_11', 'pet_7', 'pet_8',  #MVA
+              'tmax_10', 'tmax_11', 'tmin_3', 'tmin_6', 'tmin_8', 'tmean_5', 'tmean_10', 'tmean_11', 'Mean.Tmp.Dry.Q', 'pet_1', 'pet_12', # NMV
+              'prec_3', 'prec_7', 'prec_10', 'prec_11', 'Ann.Prc', 'Prc.Wrm.Q', #TSA.RXSA
+              'prec_2', 'prec_3', 'prec_7', 'prec_11', 'Ann.Prc', 'Prc.Wet.M', 'Prc.Wet.Q', 'Prc.Wrm.Q')) # TSA.TCA
+              
+# extract site names and combine into a single dataframe
+combine_function_env <- function(x) { 
+      
+      df <-fread(file = paste0('Cimmyt_env/cimmyt_mexi_',x,'_pscovar_1656_MAF0.05.genes.out.txt'), skip = 1)  # read text files, skip first line
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_env<-lapply(env_list, combine_function_env) 
+
+# row bind dataframes
+env_top_100_common_gene <-do.call(rbind,data_list_env) #3900
+
+env_top_100_common_gene.2 <- env_top_100_common_gene %>% 
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, trait=paste(trait, collapse = ','), P=paste(P_MULTI, collapse = ',')) %>%
+  unique() #1282
+
+write.csv(env_top_100_common_gene, file = 'common_gene/cimmyt_selected_env_top_100_common_gene_MAGMA_2.5kb_long.csv')
+write.csv(env_top_100_common_gene.2, file = 'common_gene/cimmyt_selected_env_top_100_common_gene_MAGMA_2.5kb_collapse.csv')
+
+# some extra env for vcap test
+extra_env_list <- c('Prc.Cld.Q','EXAL','EXH','prec_12') #'AlTox','WTD'
+
+combine_function_env <- function(x) { 
+      
+      df <-fread(file = paste0('Cimmyt_env/cimmyt_mexi_',x,'_pscovar_1656_MAF0.05.genes.out.txt'), skip = 1)  # read text files, skip first line
+      #create containers for each datatype
+      root <- df %>% 
+        filter(GENE %in% common_gene) %>%
+        select(GENE, CHR, START, STOP, P_MULTI) %>%
+        filter(P_MULTI <= nth(sort(P_MULTI, decreasing = FALSE),100)) %>%
+        mutate(trait = x)
+}
+
+data_list_extra_env<-lapply(extra_env_list, combine_function_env) 
+
+# row bind dataframes
+extra_env_top_100_common_gene <-do.call(rbind,data_list_extra_env) #400
+
+colnames(extra_env_top_100_common_gene)[5] <- 'P_MULTI_env'
+
+```
+
+## Combine env, pred_root and widiv top 100 genes
+
+```{r combine}
+
+widiv_pred_root_env <- bind_rows('widiv_g' =widiv_g_top_100_gene.1, 'widiv_gxe'=widiv_gxe_top_100_gene.1, 'pred_root'=pred_root_top_100_gene.2,'env' = env_top_100_gene.1, .id = 'group') %>%
+  group_by(GENE) %>%
+  summarise(CHR, START, STOP, group=paste(group, collapse = ','),trait=paste(trait, collapse = ',')) %>%
+  unique() %>%
+  arrange(CHR, START)
+
+write.csv(widiv_pred_root_env,file='/top_100_genes/top_100_genes_aggrate_from_4_lists_MAGMA_2.5kb.csv', row.names = FALSE)
+
+```
+
+## Count overlap genes between pred and widiv_g and widiv_gxe by traits, and also overlap with selected env
+
+```{r count}
+#read results
+pred_root_top_100_common_gene.1 <- read.csv(file = 'common_gene/pred_root_top_100_common_gene_MAGMA_2.5kb_long.csv',row.names = 'X')
+colnames(pred_root_top_100_common_gene.1)[5] <- 'P_MULTI_pred'
+
+widiv_g_top_100_common_gene.1 <- read.csv(file = 'common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_long.csv', row.names = 'X')
+colnames(widiv_g_top_100_common_gene.1)[5] <- 'P_MULTI_widiv_g'
+
+widiv_gxe_top_100_common_gene.1 <- read.csv(file = 'common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_long.csv', row.names = 'X')
+colnames(widiv_gxe_top_100_common_gene.1)[5] <- 'P_MULTI_widiv_gxe'
+
+env_top_100_common_gene.1 <- read.csv(file = 'common_gene/cimmyt_selected_env_top_100_common_gene_MAGMA_2.5kb_long.csv', row.names = 'X')
+colnames(env_top_100_common_gene.1)[5] <- 'P_MULTI_env'
+
+# extract overlaps
+pred_widiv_g_env_100_common <- pred_root_top_100_common_gene.1 %>% 
+    inner_join(widiv_g_top_100_common_gene.1, by = c('GENE','CHR','START','STOP','trait')) %>% # 3
+    inner_join(env_top_100_common_gene.1, by = c('GENE','CHR','START','STOP')) # 0
+
+pred_widiv_g_100_common <- pred_root_top_100_common_gene.1 %>% 
+    inner_join(widiv_g_top_100_common_gene.1, by = c('GENE','CHR','START','STOP','trait'))
+
+pred_widiv_gxe_env_100_common <- pred_root_top_100_common_gene.1 %>% 
+    inner_join(widiv_gxe_top_100_common_gene.1, by = c('GENE','CHR','START','STOP','trait')) %>% # 2
+    inner_join(env_top_100_common_gene.1, by = c('GENE','CHR','START','STOP')) # 8 env
+
+pred_widiv_gxe_100_common <- pred_root_top_100_common_gene.1 %>% 
+    inner_join(widiv_gxe_top_100_common_gene.1, by = c('GENE','CHR','START','STOP','trait')) 
+
+widiv_g_env_100_common <- widiv_g_top_100_common_gene.1 %>%
+    inner_join(env_top_100_common_gene.1, by = c('GENE','CHR','START','STOP')) %>%
+    rename(P_MULTI_widiv = P_MULTI_widiv_g)
+
+widiv_g_env_100_common_n <- widiv_g_env_100_common %>%
+      group_by(trait.x, trait.y) %>%
+      summarise(n=n()) %>%
+      mutate(combination = 'WIDP_G vs ENV')
+
+#widiv_g_extra_env_100_common <- widiv_g_top_100_common_gene.1 %>%
+#    inner_join(extra_env_top_100_common_gene, by = c('GENE','CHR','START','STOP')) 
+
+widiv_gxe_env_100_common <- widiv_gxe_top_100_common_gene.1 %>%
+    inner_join(env_top_100_common_gene.1, by = c('GENE','CHR','START','STOP')) %>%
+    rename(P_MULTI_widiv = P_MULTI_widiv_gxe)
+
+widiv_gxe_env_100_common_n <- widiv_gxe_env_100_common %>%
+      group_by(trait.x, trait.y) %>%
+      summarise(n=n()) %>%
+      mutate(combination = 'WIDP_GxE vs ENV')
+
+#widiv_gxe_extra_env_100_common <- widiv_gxe_top_100_common_gene.1 %>%
+#    inner_join(extra_env_top_100_common_gene, by = c('GENE','CHR','START','STOP')) 
+
+combine_widiv_env <- bind_rows(Widiv_g_env = widiv_g_env_100_common, 
+                               #widiv_g_env.2 = widiv_g_extra_env_100_common,
+                               Widiv_gxe_env = widiv_gxe_env_100_common, .id = 'combination')
+                               #widiv_gxe_env.2 = widiv_gxe_extra_env_100_common)
+
+combine_widiv_env_count <- bind_rows(widiv_g_env = widiv_g_env_100_common_n,
+                                     widiv_gxe_env = widiv_gxe_env_100_common_n,
+                                     .id = 'combination')
+write.csv(combine_widiv_env,file = 'common_gene/VCAP/widiv_model_env_overlap_top_100_common_gene_by_trait_genelist.csv')
+
+write.csv(combine_widiv_env_count,file = 'common_gene/VCAP/widiv_model_env_overlap_top_100_common_gene_by_trait_count.csv')
+```

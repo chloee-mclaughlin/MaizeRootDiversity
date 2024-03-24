@@ -1,0 +1,21 @@
+To use MAGMA, Plink binary input files are needed.
+1. Convert numeric file to Plink binary format (.bed/.bim/.fam) using function: write.plink in package genio in R. 
+	check the create_plink_file_cimmyt.r
+	Note: genotype data was obtained from https://github.com/danjgates/AdaptationScripts2
+2. Apply gene annotation using MAGMA
+	a. download MAGMA windows -->extract files-->move magma.exe to the working directory
+	b. move plink binary file sets and gene model file to the working directory
+	c. cd working directory
+	d. magma --annotate window=2.5 nonhuman --snp-loc cimmyt_n_1809.bim --gene-loc AGPv4.36.Genes_no_header.txt --out cimmyt_n_1809
+4. Move GWAS results to working directory
+5. Create a for loop to iterate files in the working directory
+
+#----------------------------raw genotype analysis--------------------------#
+Use MAGMA, raw genotype analysis; use external phenotypes in the phenotype file; set MAF = 0.05
+
+# run raw genotype analysis; using external phenotypes; loop through variable names: selected environments
+for /F "tokens=*" %A in (cimmyt_selected_env_pheno_name.txt) do (magma --bfile cimmyt_n_1809 --gene-annot cimmyt_n_1809_2.5kb.genes.annot --pheno file=cimmyt_selected_env_pheno.txt use=%A --gene-settings snp-min-maf=0.05 --covar file=population_structure_n_1656.txt --gene-model multi=all --out Env_n1809\cimmyt_mexi_%A_pscovar_1656_MAF0.05)
+
+
+# run raw genotype analysis; using external phenotypes; loop through variable names: predicted roots
+for /F "tokens=*" %A in (cimmyt_predicted_root_pheno_name.txt) do (magma --bfile cimmyt_n_1809 --gene-annot cimmyt_n_1809_2.5kb.genes.annot --pheno file=cimmyt_predicted_root_pheno.txt use=%A --gene-settings snp-min-maf=0.05 --covar file=population_structure_n_1656.txt --gene-model multi=all --out Predicted_root\cimmyt_pred_mexi_%A_pscovar_1656_MAF0.05)

@@ -1,0 +1,195 @@
+---
+title: "common_gene_circular"
+author: "Meng Li"
+date: "2/2/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd('D:/OneDrive - The Pennsylvania State University/Box Sync/Penn_State/Research_data/Lynch_Data_2020/eGWAS/MAGMA')
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(tibble)
+library(pheatmap)
+#  if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#  BiocManager::install("karyoploteR")
+library(karyoploteR)
+library(qqman)
+library(stringr)
+library(data.table)
+#BiocManager::install("ComplexHeatmap")
+library(ComplexHeatmap)
+library(purrr)
+library(circlize)
+
+```
+
+## Read common gene annotation data
+
+```{r annotate}
+common_gene_ann <- read.csv('./gene_annotation/cimmyt_widiv_common_gene_annotation_2.5kb.csv', header = TRUE)
+
+```
+
+## common gene super list
+
+```{r gene}
+# Data from MAGMA gene results: super list
+widiv_g <- read.csv('common_gene/widiv_g_top_100_common_gene_MAGMA_2.5kb_collapse.csv', row.names = 'X')
+widiv_gxe <- read.csv('common_gene/widiv_gxe_top_100_common_gene_MAGMA_2.5kb_collapse.csv', row.names = 'X')
+pred_root <- read.csv('common_gene/pred_root_top_100_common_gene_MAGMA_2.5kb_collapse.csv', row.names = 'X')
+env <- read.csv('common_gene/cimmyt_selected_env_top_100_common_gene_MAGMA_2.5kb_collapse.csv', row.names = 'X')
+
+common_super <- bind_rows(list(widiv_g,widiv_gxe,pred_root,env)) %>%
+  dplyr::select(-c(trait,P)) %>%
+  unique()
+
+write.csv(common_super,'common_genes_aggregate_from_4_lists.csv')
+
+common_super_range <- common_super %>% dplyr::select(-GENE)
+
+```
+
+## circular plot for gene density
+
+```{r circular}
+library(circlize)
+
+widiv_g.1 <- widiv_g %>% dplyr::select(-GENE) # Gene name is not needed
+widiv_gxe.1 <- widiv_gxe %>% dplyr::select(-GENE) 
+pred_root.1 <- pred_root %>% dplyr::select(-GENE)
+env.1 <- env %>% dplyr::select(-GENE)
+# common gene range 
+genome.1 <- common_gene_ann %>%
+      group_by(Chr) %>%
+      summarise(Start = min(Start), End= max(End)) %>%
+      dplyr::rename(CHR = Chr)
+
+# check start and end positions: some have exceeded the common gene range
+widiv_g_range <- widiv_g.1 %>% group_by(CHR) %>% 
+    summarise(Start = min(START), End= max(STOP)) %>% inner_join(genome.1, by = 'CHR') %>%
+    mutate(start_diff = Start.x - Start.y, end_diff = End.y - End.x)
+
+widiv_g_d <- rainfallTransform(widiv_g.1[,2:3])
+widiv_gxe_range <- widiv_gxe.1 %>% group_by(CHR) %>% 
+    summarise(Start = min(START), End= max(STOP)) %>% inner_join(genome.1, by = 'CHR') %>%
+    mutate(start_diff = Start.x - Start.y, end_diff = End.y - End.x)
+pred_root_range <- pred_root.1 %>% group_by(CHR) %>% 
+    summarise(Start = min(START), End= max(STOP)) %>% inner_join(genome.1, by = 'CHR') %>%
+    mutate(start_diff = Start.x - Start.y, end_diff = End.y - End.x)
+env_range <- env.1 %>% group_by(CHR) %>% 
+    summarise(Start = min(START), End= max(STOP)) %>% inner_join(genome.1, by = 'CHR') %>%
+    mutate(start_diff = Start.x - Start.y, end_diff = End.y - End.x)
+
+# update
+genome.2 <- common_gene_ann %>%
+      group_by(Chr) %>%
+      summarise(Start = min(Start)-2501, End= max(End)+2501) %>%
+      dplyr::rename(CHR = Chr)
+
+# draw plot
+
+bed_list = list(env.1,pred_root.1,widiv_g.1, widiv_gxe.1)
+
+# circular rainfall and density plot
+dev.new(width=3.5,height=2.1,noRStudioGD = TRUE) # set device size
+circos.par(gap.degree=3, cell.padding=c(0, 0, 0, 0))
+circos.genomicInitialize(genome.2, plotType = 'labels',labels.cex = 0.5)   
+circos.track(ylim = c(0, 1), bg.col = "#66c2a5", bg.border = NA, track.height = 0.03)  
+
+# genomic density by how much a genomic window is covered by regions in bed
+#circos.genomicRainfall(bed_list, pch = 16, cex = 0.4, col = c('orange','forestgreen',"#FF000080", "#0000FF80")) # some showed zero because the distance is zero
+circos.genomicDensity(env.1, col = c("orange"), track.height = 0.12)
+circos.genomicDensity(pred_root.1, col = c("forestgreen"), track.height = 0.12)
+circos.genomicDensity(widiv_g.1, col = c("#FF000080"), track.height = 0.12)
+circos.genomicDensity(widiv_gxe.1, col = c("#0000FF80"), track.height = 0.12)
+
+# genomic density by the overlap as the number of the regions that overlap to each window
+#circos.genomicRainfall(bed_list,pch = 16, cex = 0.4,  col = c('orange','forestgreen',"#FF000080", "#0000FF80"),track.height = 0.1,)
+circos.genomicDensity(env.1, col = c("orange"), count_by = "number",track.height = 0.1,border = "black",lwd=0.1)
+circos.genomicDensity(pred_root.1, col = c("forestgreen"), count_by = "number",track.height = 0.1,border = "black",lwd=0.1)
+circos.genomicDensity(widiv_g.1, col = c("#FF000080"), count_by = "number",track.height = 0.1,border = "black",lwd=0.1)
+circos.genomicDensity(widiv_gxe.1, col = c("#0000FF80"), count_by = "number",track.height = 0.1,border = "black",lwd=0.1)
+
+circos.clear()
+
+lgd = Legend(at = c('Environment','Pred. root','WIDP g','WIDP gxe'), type = "points", background = NULL,pch = 21,
+    legend_gp = gpar(fill = c('orange','forestgreen',"#FF000080", "#0000FF80", col = 'black'), lwd = 1), 
+    labels_gp = gpar(fontsize = 6),title_gp = gpar(fontsize = 6, fontface = "bold"), title_position = "topleft", 
+    title = "Gene list")
+
+draw(lgd, x = unit(2.8, "in"), y = unit(1, "in"))
+#draw(lgd,just = c("right",'top'))
+
+library(gridBase)
+
+plot.new()
+circle_size = unit(1, "snpc") # snpc unit gives you a square region
+
+pushViewport(viewport(x = 0, y = 0.5, width = circle_size, height = circle_size,
+    just = c("left", "center")))
+par(omi = gridOMI(), new = TRUE)
+
+circular_line_h_plot()
+upViewport()
+
+draw(lgd_list_vertical, x = circle_size, just = "left")
+
+```
+
+## overlap gene numbers and heatmap
+
+```{r overlap}
+
+data.list <- c('widiv_g','widiv_gxe','pred_root','cimmyt_selected_env')
+
+f <- function(x, y) length(intersect(
+  x=(read.csv(paste0('common_gene/',x,'_top_100_common_gene_MAGMA_2.5kb_collapse.csv'), row.names = 'X'))$GENE,                  y=(read.csv(paste0('common_gene/',y,'_top_100_common_gene_MAGMA_2.5kb_collapse.csv'), row.names = 'X'))$GENE))
+
+overlap_n <- data.list %>%
+  expand.grid(., .) %>%
+  mutate(n = map2_dbl(Var1, Var2, f)) 
+
+# Heatmap
+library(ggplot2)
+plot <- ggplot(data = overlap_n, aes(Var2, Var1, fill = n))+
+ geom_tile(color = "white")+
+  geom_text(aes(label = n), size =3) +
+ scale_fill_gradient2(name="Number of\noverlapped genes") +
+ #labs(tag = 'WIDP G') +
+ theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1),
+       axis.text.y = element_text(vjust = 1, size = 12, hjust = 1),
+       axis.title = element_blank(),
+       panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank())+
+ coord_fixed()
+
+plot
+ggsave(plot, filename = 'common_gene/Overlap_genes_top_100_super_lists.pdf', width=16,height = 12, units = 'cm', dpi=300) 
+
+```
+
+## details of overlap genes and circular plot
+
+```{r overlap}
+data.list.2 <- data.frame(Var1 = c('widiv_gxe','pred_root','cimmyt_selected_env','widiv_gxe','widiv_gxe','pred_root'),
+                          Var2 = c('widiv_g','widiv_g','widiv_g','pred_root','cimmyt_selected_env','cimmyt_selected_env'))
+
+f_gene <- function(x, y) intersect(
+  x=(read.csv(paste0('common_gene/',x,'_top_100_common_gene_MAGMA_2.5kb_collapse.csv'), row.names = 'X'))$GENE,                  y=(read.csv(paste0('common_gene/',y,'_top_100_common_gene_MAGMA_2.5kb_collapse.csv'), row.names = 'X'))$GENE)
+
+overlap_gene <- data.list.2 %>%
+  mutate(gene = map2(Var1, Var2, f_gene)) %>%
+  unnest(cols = gene)
+
+```
+
